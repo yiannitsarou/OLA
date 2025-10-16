@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # Version: 2025-09-06 Clean stable build — brand: Ψηφιακή Κατανομή Μαθητών Α' Δημοτικού
 import sys
+SHOW_STATS_EXPORT_BUTTON = False  # κρύβει το κουμπί 'Εξαγωγή ΜΟΝΟ Στατιστικών'
 import importlib
 import importlib.util
 
@@ -479,13 +480,16 @@ if st.button("🚀 ΕΚΤΕΛΕΣΗ ΚΑΤΑΝΟΜΗΣ", type="primary", use_con
                         st.session_state["last_input_path"] = str(input_path)  # ΝΕΟ: αποθήκευση input
 
                         st.success(f"✅ Ολοκληρώθηκε. Νικητής: φύλλο {winning_sheet} — στήλη {winning_col}")
-                        st.download_button(
-                            "⬇️ Κατέβασε Τελικό Αποτέλεσμα (1→7)",
-                            data=_read_file_bytes(final_out),
-                            file_name=final_out.name,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True
-                        )
+                        # Κρυφό κουμπί «Κατέβασε Τελικό Αποτέλεσμα (1→7)»
+                        SHOW_FINAL_DOWNLOAD = False
+                        if SHOW_FINAL_DOWNLOAD:
+                            st.download_button(
+                                "⬇️ Κατέβασε Τελικό Αποτέλεσμα (1→7)",
+                                data=_read_file_bytes(final_out),
+                                file_name=final_out.name,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                use_container_width=True
+                            )
                         st.caption("ℹ️ Το αρχείο αποθηκεύτηκε και θα χρησιμοποιηθεί **αυτόματα** από τα «📊 Στατιστικά».")
         except Exception as e:
             st.exception(e)
@@ -752,13 +756,24 @@ if xl is not None:
             st.info("Συμπλήρωσε/διόρθωσε τις στήλες που λείπουν στο Excel και ξαναφόρτωσέ το.")
         stats_df = generate_stats(used_df)
         st.dataframe(stats_df, use_container_width=True)
-        st.download_button(
-            "📥 Εξαγωγή ΜΟΝΟ Στατιστικών (Excel)",
-            data=export_stats_to_excel(stats_df).getvalue(),
-            file_name=f"statistika_STEP7_FINAL_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary"
-        )
+
+        # Κρυφό κουμπί εξαγωγής στατιστικών (απενεργοποιημένο)
+
+        if SHOW_STATS_EXPORT_BUTTON:
+
+            st.download_button(
+
+                "📥 Εξαγωγή ΜΟΝΟ Στατιστικών (Excel)",
+
+                data=export_stats_to_excel(stats_df).getvalue(),
+
+                file_name=f"statistika_STEP7_FINAL_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+
+                type="primary"
+
+            )
 
     with tab2:
         st.subheader("💔 Σπασμένες αμοιβαίες φιλίες")
