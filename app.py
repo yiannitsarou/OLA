@@ -1,11 +1,28 @@
 # -*- coding: utf-8 -*-
 # Version: 2025-09-06 Clean stable build — brand: Ψηφιακή Κατανομή Μαθητών Α' Δημοτικού
+
+# --- Lotus logo beside the title (best-effort search for file) ---
+from pathlib import Path as _Path
+_logo_candidates = [
+    _Path("lotus.png"),
+    _Path("lotus_logo.png"),
+    _Path("assets/lotus.png"),
+    _Path("assets/lotus_logo.png"),
+    _Path("static/lotus.png"),
+    _Path("static/lotus_logo.png"),
+]
+_logo_path = next((str(p) for p in _logo_candidates if p.exists()), None)
+if _logo_path:
+    c1, c2 = st.columns([7,1])
+    with c1:
+        pass  # title was already rendered above
+    with c2:
+        st.image(_logo_path, use_column_width=True)
+# --- end logo ---
+
 import re, os, json, importlib.util, datetime as dt, math, base64, unicodedata
 from pathlib import Path
 from io import BytesIO
-import sys
-import importlib.util
-import importlib
 
 ROOT = Path(__file__).parent.resolve()
 
@@ -184,20 +201,10 @@ if not (_auth and _terms):
     _inject_floating_logo(width_px=62)
 
 def _load_module(name: str, file_path: Path):
-    """Load a module given its file path.
-    Fallback to importlib.import_module if exec_module has environment-specific issues."""
-    try:
-        spec = importlib.util.spec_from_file_location(name, str(file_path))
-        mod = importlib.util.module_from_spec(spec)
-        assert spec and spec.loader, "Invalid spec/loader"
-        spec.loader.exec_module(mod)
-        return mod
-    except Exception as e:
-        # Fallback: import by name after injecting the parent folder to sys.path
-        parent = str(file_path.parent)
-        if parent not in sys.path:
-            sys.path.insert(0, parent)
-        return importlib.import_module(name)
+    spec = importlib.util.spec_from_file_location(name, str(file_path))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 def _read_file_bytes(path: Path) -> bytes:
     with open(path, "rb") as f:
