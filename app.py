@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Unified Team Optimizer - Fill & Optimize in 1-Click
-FIX v3.9.4 FINAL: Fixed truncated lines and syntax errors
+FIX v3.9.5 FINAL: Fixed encoding issues + all previous fixes
 """
 import streamlit as st
 import openpyxl
