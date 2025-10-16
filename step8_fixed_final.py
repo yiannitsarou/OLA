@@ -10,30 +10,6 @@ step8_fixed_final.py
 - ΚΑΤΗΓΟΡΙΟΠΟΙΗΣΗ + SINGLE sheets
 - Detailed statistics + swaps log
 
-Χρήση ως module:
-    from step8_fixed_final import UnifiedProcessor
-    
-    processor = UnifiedProcessor()
-    
-    # Phase 1: Fill
-    processor.read_source_data("students.xlsx")
-    filled_path = processor.fill_target_excel("template.xlsx", "filled.xlsx")
-    
-    # Phase 2: Optimize
-    processor.load_filled_data("filled.xlsx")
-    swaps, spreads = processor.optimize(max_iterations=100)
-    processor.export_optimized_excel(swaps, spreads, "optimized.xlsx")
-
-Χρήση από CLI:
-    # Fill only
-    python step8_fixed_final.py fill --source students.xlsx --template tmpl.xlsx --out filled.xlsx
-    
-    # Optimize only
-    python step8_fixed_final.py optimize --input filled.xlsx --out optimized.xlsx
-    
-    # All-in-one
-    python step8_fixed_final.py all --source students.xlsx --template tmpl.xlsx --out final.xlsx
-
 Απαιτήσεις: openpyxl>=3.1.0
 """
 from __future__ import annotations
@@ -41,7 +17,7 @@ from __future__ import annotations
 import sys
 import argparse
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional, Any
 
 from openpyxl import load_workbook, Workbook
@@ -49,31 +25,31 @@ from openpyxl.styles import Alignment, PatternFill, Font
 from openpyxl.worksheet.worksheet import Worksheet
 
 
-# ========== DATACLASSES ==========
+# ========== DATACLASSES (FIXED για Python 3.12) ==========
 
 @dataclass
 class StudentData:
     """Δεδομένα μαθητή από source (Phase 1)."""
-    name: str
-    gender: str
-    teacher_child: str      # ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ
-    calm: str               # ΖΩΗΡΟΣ
-    special_needs: str      # ΙΔΙΑΙΤΕΡΟΤΗΤΑ
-    greek_knowledge: str    # Ν/Ο
-    friends: List[str]
-    conflicts: int
-    choice: int
+    name: str = ""
+    gender: str = ""
+    teacher_child: str = "Ο"
+    calm: str = "Ο"
+    special_needs: str = "Ο"
+    greek_knowledge: str = "Ν"
+    friends: List[str] = field(default_factory=list)
+    conflicts: int = 0
+    choice: int = 1
 
 
 @dataclass
 class Student:
     """Student για optimizer (Phase 2)."""
-    name: str
-    choice: int
-    gender: str
-    greek_knowledge: str
-    friends: List[str]
-    locked: bool
+    name: str = ""
+    choice: int = 1
+    gender: str = ""
+    greek_knowledge: str = "Ν"
+    friends: List[str] = field(default_factory=list)
+    locked: bool = False
 
 
 # ========== MAIN PROCESSOR CLASS ==========
@@ -1173,25 +1149,24 @@ def main(argv: Optional[List[str]] = None) -> int:
         processor = UnifiedProcessor()
 
         if args.mode == "fill":
-            print(f"🔄 Mode: FILL")
+            print(f"📄 Mode: FILL")
             processor.read_source_data(args.source)
             processor.fill_target_excel(args.template, args.out)
             
             if processor.warnings:
                 print(f"\n⚠️  {len(processor.warnings)} warnings:")
-                for w in processor.warnings[:10]:  # Show first 10
+                for w in processor.warnings[:10]:
                     print(f"  • {w}")
             
             return 0
 
         elif args.mode == "optimize":
-            print(f"🔄 Mode: OPTIMIZE")
-            # Need to reload source for students_data
+            print(f"📄 Mode: OPTIMIZE")
             print("⚠️  Warning: Για optimize χρειάζεται το source file. Χρησιμοποίησε mode 'all'")
             return 1
 
         elif args.mode == "all":
-            print(f"🔄 Mode: ALL (Fill + Optimize)")
+            print(f"📄 Mode: ALL (Fill + Optimize)")
             
             # Phase 1: Fill
             print("\n📋 Phase 1/2: Filling...")
@@ -1235,12 +1210,4 @@ def main(argv: Optional[List[str]] = None) -> int:
     except FileNotFoundError as e:
         print(f"❌ Σφάλμα: Δεν βρέθηκε αρχείο - {e}", file=sys.stderr)
         return 1
-    except Exception as e:
-        print(f"❌ Σφάλμα: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc()
-        return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    except Exception as e
