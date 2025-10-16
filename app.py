@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 # Version: 2025-09-06 Clean stable build — brand: Ψηφιακή Κατανομή Μαθητών Α' Δημοτικού
+import sys
+import importlib
+import importlib.util
 
 # --- Lotus logo beside the title (best-effort search for file) ---
 from pathlib import Path as _Path
