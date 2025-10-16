@@ -3,6 +3,9 @@
 import re, os, json, importlib.util, datetime as dt, math, base64, unicodedata
 from pathlib import Path
 from io import BytesIO
+import sys
+import importlib.util
+import importlib
 
 ROOT = Path(__file__).parent.resolve()
 
