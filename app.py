@@ -181,10 +181,20 @@ if not (_auth and _terms):
     _inject_floating_logo(width_px=62)
 
 def _load_module(name: str, file_path: Path):
-    spec = importlib.util.spec_from_file_location(name, str(file_path))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    """Load a module given its file path.
+    Fallback to importlib.import_module if exec_module has environment-specific issues."""
+    try:
+        spec = importlib.util.spec_from_file_location(name, str(file_path))
+        mod = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader, "Invalid spec/loader"
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception as e:
+        # Fallback: import by name after injecting the parent folder to sys.path
+        parent = str(file_path.parent)
+        if parent not in sys.path:
+            sys.path.insert(0, parent)
+        return importlib.import_module(name)
 
 def _read_file_bytes(path: Path) -> bytes:
     with open(path, "rb") as f:

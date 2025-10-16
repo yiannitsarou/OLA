@@ -1210,4 +1210,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     except FileNotFoundError as e:
         print(f"❌ Σφάλμα: Δεν βρέθηκε αρχείο - {e}", file=sys.stderr)
         return 1
-    except Exception as e
+    except Exception as e:
+        print(f"❌ Απρόσμενο σφάλμα: {e}", file=sys.stderr)
+        return 2
