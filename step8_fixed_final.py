@@ -1,25 +1,65 @@
-#!/usr/bin/env python3
 """
-Unified Team Optimizer - Fill & Optimize in 1-Click
-FIX v3.9.4 FINAL: Fixed truncated lines and syntax errors
-"""
-import streamlit as st
-import openpyxl
-from openpyxl.styles import Alignment, PatternFill, Font
-from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
-import io
+step8_fixed_final.py
+====================
+Ολοκληρωμένο module για Fill + Optimize (χωρίς Streamlit UI).
 
+Παρέχει όλη τη λειτουργικότητα του app.py ως library/CLI:
+- Phase 1: Fill template με δεδομένα μαθητών
+- Phase 2: Optimization με asymmetric swaps
+- Locked students support (ΖΩΗΡΟΣ, ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ, ΙΔΙΑΙΤΕΡΟΤΗΤΑ)
+- ΚΑΤΗΓΟΡΙΟΠΟΙΗΣΗ + SINGLE sheets
+- Detailed statistics + swaps log
+
+Χρήση ως module:
+    from step8_fixed_final import UnifiedProcessor
+    
+    processor = UnifiedProcessor()
+    
+    # Phase 1: Fill
+    processor.read_source_data("students.xlsx")
+    filled_path = processor.fill_target_excel("template.xlsx", "filled.xlsx")
+    
+    # Phase 2: Optimize
+    processor.load_filled_data("filled.xlsx")
+    swaps, spreads = processor.optimize(max_iterations=100)
+    processor.export_optimized_excel(swaps, spreads, "optimized.xlsx")
+
+Χρήση από CLI:
+    # Fill only
+    python step8_fixed_final.py fill --source students.xlsx --template tmpl.xlsx --out filled.xlsx
+    
+    # Optimize only
+    python step8_fixed_final.py optimize --input filled.xlsx --out optimized.xlsx
+    
+    # All-in-one
+    python step8_fixed_final.py all --source students.xlsx --template tmpl.xlsx --out final.xlsx
+
+Απαιτήσεις: openpyxl>=3.1.0
+"""
+from __future__ import annotations
+
+import sys
+import argparse
+from pathlib import Path
+from dataclasses import dataclass
+from typing import Dict, List, Tuple, Optional, Any
+
+from openpyxl import load_workbook, Workbook
+from openpyxl.styles import Alignment, PatternFill, Font
+from openpyxl.worksheet.worksheet import Worksheet
+
+
+# ========== DATACLASSES ==========
 
 @dataclass
 class StudentData:
-    """Δεδομένα μαθητή"""
+    """Δεδομένα μαθητή από source (Phase 1)."""
     name: str
     gender: str
-    teacher_child: str
-    calm: str
-    special_needs: str
-    greek_knowledge: str
+    teacher_child: str      # ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ
+    calm: str               # ΖΩΗΡΟΣ
+    special_needs: str      # ΙΔΙΑΙΤΕΡΟΤΗΤΑ
+    greek_knowledge: str    # Ν/Ο
     friends: List[str]
     conflicts: int
     choice: int
@@ -27,7 +67,7 @@ class StudentData:
 
 @dataclass
 class Student:
-    """Student για optimizer"""
+    """Student για optimizer (Phase 2)."""
     name: str
     choice: int
     gender: str
@@ -36,8 +76,10 @@ class Student:
     locked: bool
 
 
+# ========== MAIN PROCESSOR CLASS ==========
+
 class UnifiedProcessor:
-    """Ενοποιημένος processor: Fill + Optimize"""
+    """Ενοποιημένος processor: Fill + Optimize."""
     
     def __init__(self):
         self.students_data: Dict[str, StudentData] = {}
@@ -47,67 +89,55 @@ class UnifiedProcessor:
         self.target_ep3 = 3
         self.target_gender = 4
         self.target_greek = 4
+        self.warnings: List[str] = []
     
-    # ==================== PHASE 1: FILL EXCEL ====================
+    # ==================== PHASE 1: FILL ====================
     
-    def read_source_data(self, file_bytes: bytes) -> None:
-        """Διάβασμα δεδομένων από Παράδειγμα1.xlsx"""
-        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+    def read_source_data(self, source_path: str) -> None:
+        """Διάβασμα δεδομένων από Παράδειγμα1.xlsx."""
+        wb = load_workbook(source_path, data_only=True)
         
         for sheet_name in wb.sheetnames:
             sheet = wb[sheet_name]
-            headers = {}
-            for col_idx, cell in enumerate(sheet[1], start=1):
-                if cell.value:
-                    header = str(cell.value).strip()
-                    headers[header] = col_idx
+            headers = self._parse_headers_fill(sheet)
             
             if 'ΟΝΟΜΑ' not in headers:
                 continue
             
             for row_idx in range(2, sheet.max_row + 1):
-                name_cell = sheet.cell(row_idx, headers['ΟΝΟΜΑ'])
-                name = name_cell.value
+                name = self._get_cell_value(sheet, row_idx, headers.get('ΟΝΟΜΑ'))
                 
-                if not name or str(name).strip() == '':
+                if not name:
                     continue
                 
-                name = str(name).strip()
-                
-                def safe_get(header, default=''):
-                    if header in headers:
-                        col_idx = headers[header]
-                        val = sheet.cell(row_idx, col_idx).value
-                        if val is not None and str(val).strip() != '':
-                            return str(val).strip()
-                    return default
-                
-                friends_str = safe_get('ΦΙΛΟΙ', '')
+                # Friends
+                friends_str = self._get_cell_value(sheet, row_idx, headers.get('ΦΙΛΟΙ'))
                 friends = [f.strip() for f in friends_str.split(',') if f.strip()] if friends_str else []
                 
+                # Choice (ΕΠΙΔΟΣΗ)
                 choice_val = 1
                 if 'ΕΠΙΔΟΣΗ' in headers:
-                    epidosi_cell = sheet.cell(row_idx, headers['ΕΠΙΔΟΣΗ']).value
-                    if epidosi_cell is not None:
+                    epidosi_raw = sheet.cell(row_idx, headers['ΕΠΙΔΟΣΗ']).value
+                    if epidosi_raw is not None:
                         try:
-                            choice_val = int(epidosi_cell)
+                            choice_val = int(epidosi_raw)
                         except:
                             choice_val = 1
                 
                 # Greek knowledge - robust parsing
                 greek_raw = None
-                found_greek_column = False
-                for possible_header in ['ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ', 'ΚΑΛΗ ΓΝΩΣΗ ΕΛΛΗΝΙΚΩΝ', 
-                                       'ΚΑΛΗ_ΓΝΩΣΗ', 'ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ']:
-                    if possible_header in headers:
-                        greek_raw = safe_get(possible_header, None)
+                found_greek = False
+                for variant in ['ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ', 'ΚΑΛΗ ΓΝΩΣΗ ΕΛΛΗΝΙΚΩΝ', 
+                               'ΚΑΛΗ_ΓΝΩΣΗ', 'ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ']:
+                    if variant in headers:
+                        greek_raw = self._get_cell_value(sheet, row_idx, headers[variant], None)
                         if greek_raw is not None and greek_raw != '':
-                            found_greek_column = True
+                            found_greek = True
                             break
                 
-                # Process Greek knowledge value
-                if not found_greek_column or greek_raw is None or greek_raw == '':
-                    st.warning(f"⚠️ Μαθητής {name}: Δεν βρέθηκε στήλη ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ - παραλείπεται")
+                # Process Greek knowledge
+                if not found_greek or greek_raw is None or greek_raw == '':
+                    self.warnings.append(f"⚠️ Μαθητής {name}: Δεν βρέθηκε ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ - παραλείπεται")
                     continue
                 else:
                     greek_str = str(greek_raw).strip().upper()
@@ -116,15 +146,15 @@ class UnifiedProcessor:
                     elif greek_str.startswith('Ο') or greek_str.startswith('O'):
                         greek_val = 'Ο'
                     else:
-                        st.warning(f"⚠️ Unknown ΚΑΛΗ_ΓΝΩΣΗ '{greek_raw}' for {name}, defaulting to Ν")
+                        self.warnings.append(f"⚠️ Unknown ΚΑΛΗ_ΓΝΩΣΗ '{greek_raw}' for {name}, defaulting to Ν")
                         greek_val = 'Ν'
                 
                 self.students_data[name] = StudentData(
                     name=name,
-                    gender=safe_get('ΦΥΛΟ', 'Κ'),
-                    teacher_child=safe_get('ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ', 'Ο'),
-                    calm=safe_get('ΖΩΗΡΟΣ', 'Ο'),
-                    special_needs=safe_get('ΙΔΙΑΙΤΕΡΟΤΗΤΑ', 'Ο'),
+                    gender=self._get_cell_value(sheet, row_idx, headers.get('ΦΥΛΟ'), 'Κ'),
+                    teacher_child=self._get_cell_value(sheet, row_idx, headers.get('ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ'), 'Ο'),
+                    calm=self._get_cell_value(sheet, row_idx, headers.get('ΖΩΗΡΟΣ'), 'Ο'),
+                    special_needs=self._get_cell_value(sheet, row_idx, headers.get('ΙΔΙΑΙΤΕΡΟΤΗΤΑ'), 'Ο'),
                     greek_knowledge=greek_val,
                     friends=friends,
                     conflicts=0,
@@ -132,29 +162,28 @@ class UnifiedProcessor:
                 )
         
         wb.close()
-        st.success(f"✅ Διαβάστηκαν {len(self.students_data)} μαθητές από source file")
+        print(f"✅ Διαβάστηκαν {len(self.students_data)} μαθητές από source file")
     
-    def fill_target_excel(self, target_bytes: bytes) -> bytes:
-        """Συμπλήρωση STEP7_FINAL_SCENARIO (in-memory)"""
-        wb = openpyxl.load_workbook(io.BytesIO(target_bytes))
+    def fill_target_excel(self, template_path: str, output_path: str) -> str:
+        """Συμπλήρωση STEP7_TEMPLATE."""
+        wb = load_workbook(template_path)
         
         for sheet_name in wb.sheetnames:
             sheet = wb[sheet_name]
             filled_count = self._fill_sheet(sheet, sheet_name)
             if filled_count > 0:
-                st.info(f"📝 Sheet '{sheet_name}': {filled_count} μαθητές")
+                print(f"📝 Sheet '{sheet_name}': {filled_count} μαθητές")
         
         self._create_categorization_sheet(wb)
         
-        output = io.BytesIO()
-        wb.save(output)
+        wb.save(output_path)
         wb.close()
-        output.seek(0)
         
-        return output.getvalue()
+        print(f"✅ Filled Excel αποθηκεύτηκε: {output_path}")
+        return output_path
     
-    def _fill_sheet(self, sheet, team_name: str) -> int:
-        """Συμπλήρωση ενός sheet"""
+    def _fill_sheet(self, sheet: Worksheet, team_name: str) -> int:
+        """Συμπλήρωση ενός sheet."""
         headers_map = {}
         for col_idx, cell in enumerate(sheet[1], start=1):
             if cell.value:
@@ -226,8 +255,8 @@ class UnifiedProcessor:
         
         return filled_count
     
-    def _create_categorization_sheet(self, workbook) -> None:
-        """Δημιουργία sheet ΚΑΤΗΓΟΡΙΟΠΟΙΗΣΗ"""
+    def _create_categorization_sheet(self, workbook: Workbook) -> None:
+        """Δημιουργία sheet ΚΑΤΗΓΟΡΙΟΠΟΙΗΣΗ."""
         if 'ΚΑΤΗΓΟΡΙΟΠΟΙΗΣΗ' in workbook.sheetnames:
             del workbook['ΚΑΤΗΓΟΡΙΟΠΟΙΗΣΗ']
         
@@ -309,13 +338,13 @@ class UnifiedProcessor:
         self._create_single_sheet(workbook, all_students, processed)
     
     def _is_student_locked(self, student: StudentData) -> bool:
-        """Έλεγχος αν μαθητής είναι locked"""
+        """Έλεγχος αν μαθητής είναι locked."""
         return (student.calm == 'Ν' or 
                 student.teacher_child == 'Ν' or 
                 student.special_needs == 'Ν')
     
     def _determine_category(self, gender_a: str, greek_a: str, gender_b: str, greek_b: str) -> str:
-        """Καθορισμός κατηγορίας δυάδας"""
+        """Καθορισμός κατηγορίας δυάδας."""
         if gender_a != gender_b:
             return "Ομάδες Μικτού Φύλου"
         
@@ -330,7 +359,7 @@ class UnifiedProcessor:
             return f"Μικτής Γνώσης ({gender_label})"
     
     def _determine_single_category(self, gender: str, greek_knowledge: str) -> str:
-        """Καθορισμός κατηγορίας για μεμονωμένο μαθητή"""
+        """Καθορισμός κατηγορίας για μεμονωμένο μαθητή."""
         gender_label = "Κορίτσια" if gender == "Κ" else "Αγόρια"
         
         if greek_knowledge == "Ν":
@@ -338,8 +367,8 @@ class UnifiedProcessor:
         else:
             return f"{gender_label} - Ο (όχι καλή γνώση)"
     
-    def _create_single_sheet(self, workbook, all_students: List[Dict], processed_names: set) -> None:
-        """Δημιουργία sheet SINGLE"""
+    def _create_single_sheet(self, workbook: Workbook, all_students: List[Dict], processed_names: set) -> None:
+        """Δημιουργία sheet SINGLE."""
         if 'SINGLE' in workbook.sheetnames:
             del workbook['SINGLE']
         
@@ -394,9 +423,9 @@ class UnifiedProcessor:
     
     # ==================== PHASE 2: OPTIMIZE ====================
     
-    def load_filled_data(self, filled_bytes: bytes) -> None:
-        """Φόρτωση δεδομένων από filled Excel για optimization"""
-        wb = openpyxl.load_workbook(io.BytesIO(filled_bytes), data_only=True)
+    def load_filled_data(self, filled_path: str) -> None:
+        """Φόρτωση δεδομένων από filled Excel για optimization."""
+        wb = load_workbook(filled_path, data_only=True)
         
         if 'ΚΑΤΗΓΟΡΙΟΠΟΙΗΣΗ' in wb.sheetnames:
             self._load_from_kategoriopoihsh(wb['ΚΑΤΗΓΟΡΙΟΠΟΙΗΣΗ'])
@@ -422,9 +451,10 @@ class UnifiedProcessor:
                     self.teams[sheet_name].append(name)
         
         wb.close()
+        print(f"✅ Φορτώθηκαν {len(self.students)} students, {len(self.teams)} teams")
     
-    def _load_from_kategoriopoihsh(self, sheet) -> None:
-        """Διάβασμα δυάδων από ΚΑΤΗΓΟΡΙΟΠΟΙΗΣΗ sheet"""
+    def _load_from_kategoriopoihsh(self, sheet: Worksheet) -> None:
+        """Διάβασμα δυάδων από ΚΑΤΗΓΟΡΙΟΠΟΙΗΣΗ sheet."""
         headers = self._parse_headers(sheet)
         
         required = ['ΜΑΘΗΤΗΣΑ', 'ΜΑΘΗΤΗΣΒ', 'ΚΑΤΗΓΟΡΙΑΔΥΑΔΑΣ', 'ΕΠΙΔΟΣΗ']
@@ -485,8 +515,8 @@ class UnifiedProcessor:
                     locked=is_locked
                 )
     
-    def _load_from_single(self, sheet) -> None:
-        """Διάβασμα μονών μαθητών από SINGLE sheet"""
+    def _load_from_single(self, sheet: Worksheet) -> None:
+        """Διάβασμα μονών μαθητών από SINGLE sheet."""
         headers = self._parse_headers(sheet)
         
         required = ['ΟΝΟΜΑ', 'ΦΥΛΟ', 'ΚΑΛΗΓΝΩΣΗΕΛΛΗΝΙΚΩΝ', 'ΕΠΙΔΟΣΗ']
@@ -542,25 +572,8 @@ class UnifiedProcessor:
                 locked=is_locked
             )
     
-    def _parse_headers(self, sheet) -> Dict[str, int]:
-        """Normalization headers"""
-        headers = {}
-        for col_idx, cell in enumerate(sheet[1], start=1):
-            if cell.value:
-                raw_header = str(cell.value).strip()
-                headers[raw_header] = col_idx
-                normalized = raw_header.upper().replace(' ', '').replace('_', '')
-                headers[normalized] = col_idx
-        return headers
-    
-    def _get_cell_value(self, sheet, row: int, col: int, default=''):
-        if col is None:
-            return default
-        val = sheet.cell(row, col).value
-        return str(val).strip() if val is not None else default
-    
     def calculate_spreads(self) -> Dict[str, int]:
-        """Υπολογισμός spreads"""
+        """Υπολογισμός spreads."""
         stats = self._get_team_stats()
         if not stats:
             return {'ep3': 0, 'boys': 0, 'girls': 0, 'greek_yes': 0}
@@ -578,7 +591,7 @@ class UnifiedProcessor:
         }
     
     def _get_team_stats(self) -> Dict:
-        """Μέτρηση stats ανά τμήμα"""
+        """Μέτρηση stats ανά τμήμα."""
         stats = {}
         for team_name, student_names in self.teams.items():
             boys = girls = greek_yes = greek_no = ep1 = ep2 = ep3 = 0
@@ -614,8 +627,10 @@ class UnifiedProcessor:
         return stats
     
     def optimize(self, max_iterations: int = 100) -> Tuple[List[Dict], Dict]:
-        """Asymmetric optimization"""
+        """Asymmetric optimization."""
         applied_swaps = []
+        
+        print(f"🔄 Ξεκινά optimization (max {max_iterations} iterations)...")
         
         for iteration in range(max_iterations):
             spreads = self.calculate_spreads()
@@ -624,6 +639,7 @@ class UnifiedProcessor:
                 spreads['boys'] <= self.target_gender and
                 spreads['girls'] <= self.target_gender and
                 spreads['greek_yes'] <= self.target_greek):
+                print(f"✅ Targets επιτεύχθηκαν στο iteration {iteration}")
                 break
             
             stats = self._get_team_stats()
@@ -633,26 +649,35 @@ class UnifiedProcessor:
             min_team = min(ep3_counts.items(), key=lambda x: x[1])[0]
             
             if ep3_counts[max_team] - ep3_counts[min_team] <= self.target_ep3:
+                print(f"✅ EP3 spread ≤ target στο iteration {iteration}")
                 break
             
             all_swaps = self._generate_asymmetric_swaps(max_team, min_team)
             
             if not all_swaps:
+                print(f"⚠️ Δεν βρέθηκαν άλλα swaps στο iteration {iteration}")
                 break
             
             best_swap = self._select_best_swap(all_swaps)
             
             if not best_swap:
+                print(f"⚠️ Δεν βρέθηκε best swap στο iteration {iteration}")
                 break
             
             self._apply_swap(best_swap)
             applied_swaps.append(best_swap)
+            
+            if (iteration + 1) % 10 == 0:
+                print(f"  Iteration {iteration + 1}: {len(applied_swaps)} swaps, spread_ep3={spreads['ep3']}")
         
         final_spreads = self.calculate_spreads()
+        print(f"✅ Optimization ολοκληρώθηκε: {len(applied_swaps)} swaps")
+        print(f"   Final spreads: EP3={final_spreads['ep3']}, Boys={final_spreads['boys']}, Girls={final_spreads['girls']}, Greek={final_spreads['greek_yes']}")
+        
         return applied_swaps, final_spreads
     
     def _generate_asymmetric_swaps(self, max_team: str, min_team: str) -> List[Dict]:
-        """Γέννηση asymmetric swaps"""
+        """Γέννηση asymmetric swaps."""
         swaps = []
         
         max_solos_ep3 = self._get_solos_with_ep3(max_team)
@@ -660,7 +685,7 @@ class UnifiedProcessor:
         min_solos_non_ep3 = self._get_solos_without_ep3(min_team)
         min_pairs_non_ep3 = self._get_pairs_without_ep3(min_team)
         
-        # P1: Solo(ep3)↔Solo(ep1/2)
+        # P1: Solo(ep3)↔Solo(ep1/2) - same gender + greek
         for solo_max in max_solos_ep3:
             for solo_min in min_solos_non_ep3:
                 if (solo_max['student'].gender == solo_min['student'].gender and
@@ -816,7 +841,7 @@ class UnifiedProcessor:
     
     def _calc_asymmetric_improvement(self, team_high: str, names_out: List[str],
                                       team_low: str, names_in: List[str]) -> Dict:
-        """Υπολογισμός improvement"""
+        """Υπολογισμός improvement."""
         stats_before = self._get_team_stats()
         stats_after = {k: v.copy() for k, v in stats_before.items()}
         
@@ -916,9 +941,9 @@ class UnifiedProcessor:
         for name in students_in:
             self.teams[from_team].append(name)
     
-    def export_optimized_excel(self, applied_swaps: List[Dict], final_spreads: Dict) -> bytes:
-        """Εξαγωγή optimized Excel"""
-        wb = openpyxl.Workbook()
+    def export_optimized_excel(self, applied_swaps: List[Dict], final_spreads: Dict, output_path: str) -> str:
+        """Εξαγωγή optimized Excel."""
+        wb = Workbook()
         wb.remove(wb.active)
         
         for team_name in sorted(self.teams.keys()):
@@ -927,14 +952,13 @@ class UnifiedProcessor:
         self._create_statistics_sheet(wb, final_spreads)
         self._create_swaps_log_sheet(wb, applied_swaps)
         
-        output = io.BytesIO()
-        wb.save(output)
+        wb.save(output_path)
         wb.close()
-        output.seek(0)
         
-        return output.getvalue()
+        print(f"✅ Optimized Excel αποθηκεύτηκε: {output_path}")
+        return output_path
     
-    def _create_team_sheet(self, wb, team_name: str) -> None:
+    def _create_team_sheet(self, wb: Workbook, team_name: str) -> None:
         sheet = wb.create_sheet(team_name)
         
         headers = ['ΟΝΟΜΑ', 'ΦΥΛΟ', 'ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ', 'ΕΠΙΔΟΣΗ', 'ΦΙΛΟΙ']
@@ -979,7 +1003,7 @@ class UnifiedProcessor:
         sheet.column_dimensions['D'].width = 12
         sheet.column_dimensions['E'].width = 40
     
-    def _create_statistics_sheet(self, wb, spreads: Dict) -> None:
+    def _create_statistics_sheet(self, wb: Workbook, spreads: Dict) -> None:
         sheet = wb.create_sheet('ΒΕΛΤΙΩΜΕΝΗ_ΣΤΑΤΙΣΤΙΚΗ')
         
         headers = ['Τμήμα', 'Σύνολο', 'Αγόρια', 'Κορίτσια', 
@@ -1050,7 +1074,7 @@ class UnifiedProcessor:
         for col in ['A', 'B', 'C', 'D']:
             sheet.column_dimensions[col].width = 20
     
-    def _create_swaps_log_sheet(self, wb, swaps: List[Dict]) -> None:
+    def _create_swaps_log_sheet(self, wb: Workbook, swaps: List[Dict]) -> None:
         sheet = wb.create_sheet('ΕΦΑΡΜΟΣΜΕΝΑ_SWAPS')
         
         headers = ['#', 'Τύπος', 'Από Τμήμα', 'Μαθητές OUT', 
@@ -1082,148 +1106,141 @@ class UnifiedProcessor:
         
         for col, width in [('A',8),('B',25),('C',15),('D',35),('E',15),('F',35),('G',10),('H',10),('I',10),('J',10)]:
             sheet.column_dimensions[col].width = width
+    
+    # ==================== HELPERS ====================
+    
+    def _parse_headers(self, sheet: Worksheet) -> Dict[str, int]:
+        """Normalization headers."""
+        headers = {}
+        for col_idx, cell in enumerate(sheet[1], start=1):
+            if cell.value:
+                raw_header = str(cell.value).strip()
+                headers[raw_header] = col_idx
+                normalized = raw_header.upper().replace(' ', '').replace('_', '')
+                headers[normalized] = col_idx
+        return headers
+    
+    def _parse_headers_fill(self, sheet: Worksheet) -> Dict[str, int]:
+        """Parse headers για fill phase."""
+        headers = {}
+        for col_idx, cell in enumerate(sheet[1], start=1):
+            if cell.value:
+                header = str(cell.value).strip()
+                headers[header] = col_idx
+        return headers
+    
+    def _get_cell_value(self, sheet: Worksheet, row: int, col: Optional[int], default: str = '') -> str:
+        if col is None:
+            return default
+        val = sheet.cell(row, col).value
+        return str(val).strip() if val is not None else default
 
 
-def main():
-    st.set_page_config(
-        page_title="Unified Team Optimizer",
-        page_icon="🎯",
-        layout="wide"
-    )
-    
-    st.title("🎯 Unified Team Optimizer v3.9.4 FINAL")
-    st.markdown("---")
-    
-    with st.expander("📖 Οδηγίες Χρήσης", expanded=False):
-        st.markdown("""
-        **FIX v3.9.4 FINAL:** 
-        - ✅ Fixed truncated lines
-        - ✅ Fixed syntax errors
-        - ✅ Complete implementation
-        
-        **Workflow:**
-        1. Ανέβασε **Παράδειγμα1.xlsx** (δεδομένα μαθητών)
-        2. Ανέβασε **STEP7_TEMPLATE.xlsx** (template τμημάτων)
-        3. Πάτα "⚡ Fill & Optimize"
-        4. Κατέβασε **ΒΕΛΤΙΩΜΕΝΗ_ΚΑΤΑΝΟΜΗ.xlsx**
-        
-        **Στόχοι:** Spread Επ3 ≤3, Φύλου ≤4, Γνώσης ≤4
-        """)
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("📥 Πηγή Δεδομένων")
-        source_file = st.file_uploader("Ανέβασε Παράδειγμα1.xlsx", type=['xlsx'], key='source')
-        if source_file:
-            st.success(f"✅ {source_file.name}")
-    
-    with col2:
-        st.subheader("📄 Template")
-        template_file = st.file_uploader("Ανέβασε STEP7_TEMPLATE.xlsx", type=['xlsx'], key='template')
-        if template_file:
-            st.success(f"✅ {template_file.name}")
-    
-    st.markdown("---")
-    
-    if source_file and template_file:
-        if st.button("⚡ Fill & Optimize", type="primary", use_container_width=True):
-            with st.spinner("🔄 Phase 1/2: Filling..."):
-                try:
-                    processor = UnifiedProcessor()
-                    source_bytes = source_file.read()
-                    template_bytes = template_file.read()
-                    
-                    processor.read_source_data(source_bytes)
-                    
-                    filled_bytes = processor.fill_target_excel(template_bytes)
-                    st.success("✅ Excel συμπληρώθηκε")
-                    
-                except Exception as e:
-                    st.error(f"❌ Σφάλμα Phase 1: {str(e)}")
-                    st.stop()
+# ========== CLI ==========
+
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Βήμα 8: Fill + Optimize (χωρίς Streamlit)")
+    sub = p.add_subparsers(dest="mode", required=True, help="Λειτουργία")
+
+    # Fill mode
+    p_fill = sub.add_parser("fill", help="Fill template με δεδομένα")
+    p_fill.add_argument("--source", required=True, help="Excel με μαθητές (Παράδειγμα1.xlsx)")
+    p_fill.add_argument("--template", required=True, help="Template με τμήματα")
+    p_fill.add_argument("--out", required=True, help="Output path")
+
+    # Optimize mode
+    p_opt = sub.add_parser("optimize", help="Optimize filled Excel")
+    p_opt.add_argument("--input", required=True, help="Filled Excel")
+    p_opt.add_argument("--out", required=True, help="Output path")
+    p_opt.add_argument("--max-iter", type=int, default=100, help="Max iterations (default: 100)")
+
+    # All mode
+    p_all = sub.add_parser("all", help="Fill + Optimize σε μία")
+    p_all.add_argument("--source", required=True)
+    p_all.add_argument("--template", required=True)
+    p_all.add_argument("--out", required=True)
+    p_all.add_argument("--max-iter", type=int, default=100, help="Max iterations")
+
+    return p
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    argv = argv if argv is not None else sys.argv[1:]
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    try:
+        processor = UnifiedProcessor()
+
+        if args.mode == "fill":
+            print(f"🔄 Mode: FILL")
+            processor.read_source_data(args.source)
+            processor.fill_target_excel(args.template, args.out)
             
-            with st.spinner("🔄 Phase 2/2: Optimizing..."):
-                try:
-                    processor.load_filled_data(filled_bytes)
-                    spreads_before = processor.calculate_spreads()
-                    
-                    st.info("📊 **ΠΡΙΝ:**")
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("Spread Επ3", spreads_before['ep3'])
-                    with col2:
-                        st.metric("Spread Αγόρια", spreads_before['boys'])
-                    with col3:
-                        st.metric("Spread Κορίτσια", spreads_before['girls'])
-                    with col4:
-                        st.metric("Spread Γνώση", spreads_before['greek_yes'])
-                    
-                    applied_swaps, spreads_after = processor.optimize(max_iterations=100)
-                    
-                    st.markdown("---")
-                    st.success("✅ **ΜΕΤΑ:**")
-                    
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("Spread Επ3", spreads_after['ep3'], 
-                                 delta=-(spreads_before['ep3'] - spreads_after['ep3']), delta_color="inverse")
-                        if spreads_after['ep3'] <= 3:
-                            st.success("✅")
-                        else:
-                            st.warning("⚠️ ≤3")
-                    
-                    with col2:
-                        st.metric("Spread Αγόρια", spreads_after['boys'],
-                                 delta=-(spreads_before['boys'] - spreads_after['boys']), delta_color="inverse")
-                        if spreads_after['boys'] <= 4:
-                            st.success("✅")
-                        else:
-                            st.warning("⚠️ ≤4")
-                    
-                    with col3:
-                        st.metric("Spread Κορίτσια", spreads_after['girls'],
-                                 delta=-(spreads_before['girls'] - spreads_after['girls']), delta_color="inverse")
-                        if spreads_after['girls'] <= 4:
-                            st.success("✅")
-                        else:
-                            st.warning("⚠️ ≤4")
-                    
-                    with col4:
-                        st.metric("Spread Γνώση", spreads_after['greek_yes'],
-                                 delta=-(spreads_before['greek_yes'] - spreads_after['greek_yes']), delta_color="inverse")
-                        if spreads_after['greek_yes'] <= 4:
-                            st.success("✅")
-                        else:
-                            st.warning("⚠️ ≤4")
-                    
-                    st.markdown("---")
-                    st.info(f"🔄 **{len(applied_swaps)} swaps εφαρμόστηκαν**")
-                    
-                    output_bytes = processor.export_optimized_excel(applied_swaps, spreads_after)
-                    
-                    st.download_button(
-                        label="📥 Κατέβασε ΒΕΛΤΙΩΜΕΝΗ_ΚΑΤΑΝΟΜΗ.xlsx",
-                        data=output_bytes,
-                        file_name="ΒΕΛΤΙΩΜΕΝΗ_ΚΑΤΑΝΟΜΗ.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="primary",
-                        use_container_width=True
-                    )
-                    
-                    st.balloons()
-                    
-                except Exception as e:
-                    st.error(f"❌ Σφάλμα Phase 2: {str(e)}")
-                    with st.expander("Λεπτομέρειες"):
-                        import traceback
-                        st.code(traceback.format_exc())
-    else:
-        st.info("👆 Ανέβασε και τα δύο αρχεία")
-    
-    st.markdown("---")
-    st.success("✅ v3.9.4 FINAL | Fixed truncated lines and syntax errors")
+            if processor.warnings:
+                print(f"\n⚠️  {len(processor.warnings)} warnings:")
+                for w in processor.warnings[:10]:  # Show first 10
+                    print(f"  • {w}")
+            
+            return 0
+
+        elif args.mode == "optimize":
+            print(f"🔄 Mode: OPTIMIZE")
+            # Need to reload source for students_data
+            print("⚠️  Warning: Για optimize χρειάζεται το source file. Χρησιμοποίησε mode 'all'")
+            return 1
+
+        elif args.mode == "all":
+            print(f"🔄 Mode: ALL (Fill + Optimize)")
+            
+            # Phase 1: Fill
+            print("\n📋 Phase 1/2: Filling...")
+            processor.read_source_data(args.source)
+            temp_filled = args.out.replace('.xlsx', '_TEMP_FILLED.xlsx')
+            processor.fill_target_excel(args.template, temp_filled)
+            
+            # Phase 2: Optimize
+            print("\n🎯 Phase 2/2: Optimizing...")
+            processor.load_filled_data(temp_filled)
+            
+            spreads_before = processor.calculate_spreads()
+            print(f"\n📊 ΠΡΙΝ:")
+            print(f"  EP3 spread: {spreads_before['ep3']}")
+            print(f"  Boys spread: {spreads_before['boys']}")
+            print(f"  Girls spread: {spreads_before['girls']}")
+            print(f"  Greek spread: {spreads_before['greek_yes']}")
+            
+            swaps, spreads_after = processor.optimize(max_iterations=args.max_iter)
+            
+            print(f"\n📊 ΜΕΤΑ:")
+            print(f"  EP3 spread: {spreads_after['ep3']} {'✅' if spreads_after['ep3'] <= 3 else '❌'}")
+            print(f"  Boys spread: {spreads_after['boys']} {'✅' if spreads_after['boys'] <= 4 else '❌'}")
+            print(f"  Girls spread: {spreads_after['girls']} {'✅' if spreads_after['girls'] <= 4 else '❌'}")
+            print(f"  Greek spread: {spreads_after['greek_yes']} {'✅' if spreads_after['greek_yes'] <= 4 else '❌'}")
+            
+            processor.export_optimized_excel(swaps, spreads_after, args.out)
+            
+            # Cleanup temp file
+            Path(temp_filled).unlink(missing_ok=True)
+            
+            print(f"\n🎉 Ολοκληρώθηκε! Swaps: {len(swaps)}")
+            
+            if processor.warnings:
+                print(f"\n⚠️  {len(processor.warnings)} warnings:")
+                for w in processor.warnings[:10]:
+                    print(f"  • {w}")
+            
+            return 0
+
+    except FileNotFoundError as e:
+        print(f"❌ Σφάλμα: Δεν βρέθηκε αρχείο - {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"❌ Σφάλμα: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        return 1
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    raise SystemExit(main())
