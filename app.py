@@ -200,12 +200,19 @@ except Exception:
 if not (_auth and _terms):
     _inject_floating_logo(width_px=62)
 
-def _load_module(name: str, file_path: Path):
-    spec = importlib.util.spec_from_file_location(name, str(file_path))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
 
+def _load_module(name: str, file_path: Path):
+    """Load a local module by name, ensuring its folder is on sys.path.
+    We avoid exec_module here because dataclasses/typing may rely on
+    sys.modules[name] being registered during import.
+    """
+    parent = str(file_path.parent)
+    if parent not in sys.path:
+        sys.path.insert(0, parent)
+    # Remove any stale module
+    if name in sys.modules:
+        del sys.modules[name]
+    return importlib.import_module(name)
 def _read_file_bytes(path: Path) -> bytes:
     with open(path, "rb") as f:
         return f.read()
